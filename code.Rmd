@@ -1,0 +1,79 @@
+---
+title: "Renewal probability"
+author: "EPonkratova"
+date: "July 23, 2018"
+---
+
+The entry was submitted as a part of the McKinsey Analytics Hackaton (https://datahack.analyticsvidhya.com/contest/mckinsey-analytics-online-hackathon-4/). The final ranking was 113 with the score of 0.7913620886.
+
+```{r}
+#Loading the packages
+library(caret)
+library(mlbench)
+
+#Loading datasets to be used
+training <- read.csv("./train.csv")
+test <- read.csv("./test.csv")
+
+#Checking the number of NAs
+sapply(training,function(x) sum(is.na(x)))
+
+#Replacing NAs with average
+training$Count_3.6_months_late[is.na(training$Count_3.6_months_late)] <- mean(training$Count_3.6_months_late,na.rm=T)
+training$application_underwriting_score[is.na(training$application_underwriting_score)] <- mean(training$application_underwriting_score,na.rm=T)
+training$Count_6.12_months_late[is.na(training$Count_6.12_months_late)] <- mean(training$Count_6.12_months_late,na.rm=T)
+training$Count_more_than_12_months_late[is.na(training$Count_more_than_12_months_late)] <- mean(training$Count_more_than_12_months_late,na.rm=T)
+test$Count_3.6_months_late[is.na(test$Count_3.6_months_late)] <- mean(test$Count_3.6_months_late,na.rm=T)
+test$application_underwriting_score[is.na(test$application_underwriting_score)] <- mean(test$application_underwriting_score,na.rm=T)
+test$Count_6.12_months_late[is.na(test$Count_6.12_months_late)] <- mean(test$Count_6.12_months_late,na.rm=T)
+test$Count_more_than_12_months_late[is.na(test$Count_more_than_12_months_late)] <- mean(test$Count_more_than_12_months_late,na.rm=T)
+
+# Calculating correlation matrix
+numericVar <- sapply(training, is.numeric)
+corrMatrix <- cor(training[,numericVar])
+
+#Converting the age_in_days to DOB
+training$today <- as.Date("2018-07-22")
+training$birthDate <- training$today - as.difftime(training$age_in_days, unit="days")
+training$age <- round((training$today - training$birthDate) / 365)
+test$today <- as.Date("2018-07-22")
+test$birthDate <- test$today - as.difftime(test$age_in_days, unit="days")
+test$age <- round((test$today - test$birthDate) / 365)
+
+#Label encoding of a two-level var
+training$residence_area_type <- ifelse(training$residence_area_type == "Rural",1,0)
+test$residence_area_type <- ifelse(test$residence_area_type == "Rural",1,0)
+
+#One hot encoding of a multiple-leve var
+for(unique_value in unique(training$sourcing_channel)){
+  training[paste("sourcing_channel", unique_value, sep = ".")] <- ifelse(training$sourcing_channel == unique_value, 1, 0)
+}
+for(unique_value in unique(test$sourcing_channel)){
+  test[paste("sourcing_channel", unique_value, sep = ".")] <- ifelse(test$sourcing_channel == unique_value, 1, 0)
+}
+
+#Modeling using gradient boosting
+fitControl <- trainControl(method = "repeatedcv", number = 20, repeats = 2)
+model <- train(as.factor(renewal) ~ perc_premium_paid_by_cash_credit +
+                 Income + Count_3.6_months_late + Count_6.12_months_late + Count_more_than_12_months_late +
+                 application_underwriting_score + no_of_premiums_paid + residence_area_type +
+                 premium + age + sourcing_channel.C + sourcing_channel.A + sourcing_channel.B +
+                 sourcing_channel.D + sourcing_channel.E
+                 , data = training, method = "gbm", trControl = fitControl,verbose = FALSE)
+training$renewal2 <- predict(model, training,type= "prob")[,2]
+
+#Checking model accuracy
+predictedClasses <- ifelse(training$renewal2 > 0.5, 1, 0)
+baseAccuracy <- mean(training$renewal == predictedClasses)
+
+#Preding output in the test data
+test$renewal <- NA
+test$renewal <- predict(model,newdata=test, type="prob")[,2]
+
+#Calculating the part B
+test$incentives <- test$premium * 0.02
+
+#Constructing the final df
+final17 <- test[,c("id", "renewal", "incentives")]
+write.csv(file="submission17.csv",final17)
+```
